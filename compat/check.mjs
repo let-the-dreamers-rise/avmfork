@@ -3,8 +3,13 @@
 import algosdk from 'algosdk';
 
 const [forkUrl, upstreamUrl] = process.argv.slice(2);
-const fork = new algosdk.Algodv2('', forkUrl, '');
-const up = new algosdk.Algodv2('', upstreamUrl, '');
+// algosdk takes the port separately; a port inside the URL is ignored.
+function client(url) {
+  const u = new URL(url);
+  return new algosdk.Algodv2('', `${u.protocol}//${u.hostname}`, u.port);
+}
+const fork = client(forkUrl);
+const up = client(upstreamUrl);
 const USDC = 31566704n;
 let checks = 0;
 
