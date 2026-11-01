@@ -198,12 +198,17 @@ func Prepare(group []transactions.SignedTxn, marker []byte) ([]transactions.Sign
 	return out, nil
 }
 
-func (t *Tester) post(url, token string, body []byte) ([]byte, int, error) {
-	req, err := http.NewRequest(http.MethodPost, url+"/v2/transactions/simulate?format=json", bytes.NewReader(body))
+// simulate posts a msgpack simulate request to the algod at url.
+func (t *Tester) simulate(url, token string, body []byte) ([]byte, int, error) {
+	return t.postTo(url+"/v2/transactions/simulate?format=json", "application/msgpack", token, body)
+}
+
+func (t *Tester) postTo(url, contentType, token string, body []byte) ([]byte, int, error) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Content-Type", "application/msgpack")
+	req.Header.Set("Content-Type", contentType)
 	if token != "" {
 		req.Header.Set("X-Algo-API-Token", token)
 	}
@@ -236,7 +241,7 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 	body := protocol.EncodeReflect(&req)
 
 	// Upstream first; then fork at the round it ran on.
-	upBody, upCode, err := t.post(t.URL, t.Token, body)
+	upBody, upCode, err := t.simulate(t.URL, t.Token, body)
 	if err != nil {
 		c.Outcome, c.Detail = Errored, "upstream: "+err.Error()
 		return c
@@ -273,7 +278,7 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 	c.ForkRound = l.ForkRound()
 	srv := httptest.NewServer(server.New(server.NewNode(chain.New(l)), server.Options{}))
 	defer srv.Close()
-	forkBody, forkCode, err := t.post(srv.URL, "", body)
+	forkBody, forkCode, err := t.simulate(srv.URL, "", body)
 	if err != nil {
 		c.Outcome, c.Detail = Errored, "fork: "+err.Error()
 		return c
@@ -373,7 +378,7 @@ func (t *Tester) commit(c *Case, forkURL string, group []transactions.SignedTxn,
 
 	for _, s := range group {
 		body, _ := json.Marshal(map[string]any{"address": s.Txn.Sender.String()})
-		if _, code, err := t.post(forkURL+"/avmfork/impersonate", "", body); err != nil || code != http.StatusOK {
+		if _, code, err := t.postTo(forkURL+"/avmfork/impersonate", "application/json", "", body); err != nil || code != http.StatusOK {
 			c.Commit, c.CommitDetail = Errored, fmt.Sprintf("impersonate: %v (HTTP %d)", err, code)
 			return
 		}
@@ -382,7 +387,7 @@ func (t *Tester) commit(c *Case, forkURL string, group []transactions.SignedTxn,
 	for _, s := range group {
 		raw = append(raw, protocol.Encode(&s)...)
 	}
-	_, code, err := t.post(forkURL+"/v2/transactions", "", raw)
+	_, code, err := t.postTo(forkURL+"/v2/transactions", "application/x-binary", "", raw)
 	if err != nil {
 		c.Commit, c.CommitDetail = Errored, err.Error()
 		return
