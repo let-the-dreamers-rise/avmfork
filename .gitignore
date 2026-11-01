@@ -1,0 +1,5 @@
+/bin/
+/third_party/
+/go.work
+/go.work.sum
+/difftest-out/
