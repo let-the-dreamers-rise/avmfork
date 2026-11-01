@@ -232,9 +232,12 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 		}
 	}
 	req := v2.PreEncodedSimulateRequest{
-		TxnGroups:             []v2.PreEncodedSimulateRequestTransactionGroup{{Txns: group}},
-		AllowEmptySignatures:  true,
-		AllowUnnamedResources: true,
+		TxnGroups:            []v2.PreEncodedSimulateRequestTransactionGroup{{Txns: group}},
+		AllowEmptySignatures: true,
+		// With the commit check on, resources must be named, as for a
+		// real submission; otherwise simulate accepts groups that a block
+		// would reject.
+		AllowUnnamedResources: !t.CheckCommit,
 		FixSigners:            true,
 		ExecTraceConfig:       execTraceAll(),
 	}

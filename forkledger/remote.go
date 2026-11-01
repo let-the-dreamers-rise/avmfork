@@ -7,8 +7,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,7 +30,9 @@ import (
 // the round it was served at, so callers can tell when the node has moved
 // past the round they forked at.
 type Remote struct {
-	rc client.RestClient
+	rc    client.RestClient
+	base  string
+	token string
 }
 
 // NewRemote returns a Remote for the algod at rawURL.
@@ -38,7 +42,7 @@ func NewRemote(rawURL, token string) (*Remote, error) {
 		return nil, fmt.Errorf("bad algod url %q: %w", rawURL, err)
 	}
 	setUpstreamTimeout()
-	return &Remote{rc: client.MakeRestClient(*u, token)}, nil
+	return &Remote{rc: client.MakeRestClient(*u, token), base: strings.TrimRight(rawURL, "/"), token: token}, nil
 }
 
 // upstreamTimeout bounds how long avmfork waits for the upstream node to
@@ -87,9 +91,34 @@ func (r *Remote) Block(rnd basics.Round) (bookkeeping.Block, error) {
 	return bc.Block, nil
 }
 
-// Delta returns the state delta the node recorded for rnd.
+// Delta returns the state delta the node recorded for rnd. It asks for
+// msgpack: go-algorand's REST client asks for JSON, which loses non-UTF-8
+// bytes and fails to decode some deltas.
 func (r *Remote) Delta(rnd basics.Round) (ledgercore.StateDelta, error) {
-	return r.rc.GetLedgerStateDelta(rnd)
+	var d ledgercore.StateDelta
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v2/deltas/%d?format=msgpack", r.base, rnd), nil)
+	if err != nil {
+		return d, err
+	}
+	if r.token != "" {
+		req.Header.Set("X-Algo-API-Token", r.token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return d, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<20))
+	if err != nil {
+		return d, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return d, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := protocol.DecodeReflect(body, &d); err != nil {
+		return d, fmt.Errorf("decode delta %d: %w", rnd, err)
+	}
+	return d, nil
 }
 
 // OnlineMoney returns the node's current online stake.
