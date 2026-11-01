@@ -1,0 +1,52 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-amd64
+          - os: ubuntu-24.04-arm
+            name: linux-arm64
+          - os: macos-14
+            name: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install autotools
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install autoconf automake libtool; else sudo apt-get update && sudo apt-get install -y autoconf automake libtool; fi
+      - run: make build
+      - name: Package
+        run: |
+          dir=avmfork-${GITHUB_REF_NAME}-${{ matrix.name }}
+          mkdir $dir
+          cp bin/avmfork bin/avmfork-difftest README.md LICENSE $dir/
+          tar czf $dir.tar.gz $dir
+          shasum -a 256 $dir.tar.gz > $dir.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: avmfork-*.tar.gz*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Binaries built by this workflow from the tagged commit. Source and build steps: README.md." avmfork-*.tar.gz*
