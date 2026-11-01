@@ -158,8 +158,8 @@ func TestImpersonateRealAccount(t *testing.T) {
 	hdr := e.params()
 	hdr.Sender = alice
 	optin := transactions.Transaction{
-		Type:                  protocol.AssetTransferTx,
-		Header:                hdr,
+		Type:                   protocol.AssetTransferTx,
+		Header:                 hdr,
 		AssetTransferTxnFields: transactions.AssetTransferTxnFields{XferAsset: usdc, AssetReceiver: alice},
 	}
 	e.send(optin.Sign(sk))
