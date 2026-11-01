@@ -110,7 +110,7 @@ func TestRejectsBadSignatureAndDuplicate(t *testing.T) {
 	c := newChain(t)
 	alice, mallory := newKey(t), newKey(t)
 	fund(t, c, alice.addr, 10_000_000)
-	txn := pay(c, t, alice.addr, mallory.addr, 1)
+	txn := pay(c, t, alice.addr, mallory.addr, 200_000)
 
 	var ge *GroupError
 	if _, err := c.Submit([]transactions.SignedTxn{txn.Sign(mallory.sk)}); !errors.As(err, &ge) {
