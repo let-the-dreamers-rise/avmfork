@@ -27,11 +27,14 @@ func (l *Ledger) SetBalance(addr basics.Address, amt basics.MicroAlgos) error {
 	if err != nil {
 		return err
 	}
+	t := l.st.totals
 	nu := old
 	nu.MicroAlgos = amt
+	// The balance is exact: no pending rewards. (A new account on the
+	// network also starts at the current rewards level.)
+	nu.RewardsBase = t.RewardsLevel
 	var ot basics.OverflowTracker
 	unit := l.rewardUnitLocked()
-	t := l.st.totals
 	t.DelAccount(unit, old, &ot)
 	t.AddAccount(unit, nu, &ot)
 	if ot.Overflowed {
