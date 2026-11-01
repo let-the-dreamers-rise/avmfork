@@ -8,6 +8,8 @@ avmfork: forked mainnet-v1.0 (https://mainnet-api.algonode.cloud) at round 66530
 avmfork: algod API on http://127.0.0.1:4002
 ```
 
+`avmfork --fork none` starts an empty chain instead: no Docker, no upstream, a new block per transaction group. Fund accounts with `/avmfork/set-balance`.
+
 Point algosdk, AlgoKit utils, a generated app client or Lora at `http://127.0.0.1:4002` and you are talking to a copy of MainNet. Accounts, apps, boxes and assets are loaded from the upstream node the first time they are read. Every change you make stays local.
 
 ## Why
@@ -57,7 +59,7 @@ avmfork links go-algorand, which needs go-algorand's own libsodium build:
 ```
 make deps     # clones go-algorand at the pinned commit and builds libsodium
 make build    # bin/avmfork and bin/avmfork-difftest
-make test
+make test     # offline tests on an empty chain
 make e2e      # end-to-end tests against a MainNet fork (needs network)
 ```
 

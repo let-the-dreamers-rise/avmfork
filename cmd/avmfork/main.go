@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/algorand/go-algorand/data/basics"
 
@@ -24,7 +25,7 @@ var networks = map[string]string{
 }
 
 func main() {
-	fork := flag.String("fork", "mainnet", "network to fork: mainnet, testnet, or an algod URL")
+	fork := flag.String("fork", "mainnet", "network to fork: mainnet, testnet, an algod URL, or none for an empty chain")
 	forkToken := flag.String("fork-token", "", "API token for the upstream algod, if it needs one")
 	round := flag.Uint64("fork-round", 0, "round to fork at (default: the upstream's latest)")
 	listen := flag.String("listen", "127.0.0.1:4002", "address to serve the algod API on")
@@ -35,15 +36,21 @@ func main() {
 	if u, ok := networks[strings.ToLower(url)]; ok {
 		url = u
 	}
-	remote, err := forkledger.NewRemote(url, *forkToken)
-	if err != nil {
-		fatal(err)
-	}
 	var l *forkledger.Ledger
-	if *round == 0 {
-		l, err = forkledger.Open(remote)
+	var err error
+	if strings.ToLower(url) == "none" {
+		l, err = forkledger.NewEmpty("avmfork-v1", time.Now().Unix())
 	} else {
-		l, err = forkledger.OpenAt(remote, basics.Round(*round))
+		var remote *forkledger.Remote
+		remote, err = forkledger.NewRemote(url, *forkToken)
+		if err != nil {
+			fatal(err)
+		}
+		if *round == 0 {
+			l, err = forkledger.Open(remote)
+		} else {
+			l, err = forkledger.OpenAt(remote, basics.Round(*round))
+		}
 	}
 	if err != nil {
 		fatal(err)
@@ -55,7 +62,11 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	fmt.Printf("avmfork: forked %s (%s) at round %d\n", l.GenesisID(), url, l.ForkRound())
+	if l.Remote() == nil {
+		fmt.Printf("avmfork: empty chain %s\n", l.GenesisID())
+	} else {
+		fmt.Printf("avmfork: forked %s (%s) at round %d\n", l.GenesisID(), url, l.ForkRound())
+	}
 	fmt.Printf("avmfork: algod API on http://%s\n", ln.Addr())
 	go func() {
 		ch := make(chan os.Signal, 1)
