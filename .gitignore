@@ -3,3 +3,5 @@
 /go.work
 /go.work.sum
 /difftest-out/
+node_modules
+package-lock.json
