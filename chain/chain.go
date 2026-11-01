@@ -182,13 +182,17 @@ func (e *GroupError) Error() string {
 
 func (e *GroupError) Unwrap() error { return e.Err }
 
-// nextHeader builds the header for the block after the latest.
+// nextHeader builds the header for the block after the latest. Consensus
+// lets a block's timestamp be at most MaxTimestampIncrement (25 s) after its
+// parent's. When the clock is further ahead than that (the fork sat idle, or
+// was warped), nextHeader first commits an empty "clock" block at the new
+// time, evaluated without the header checks, so that the block the caller
+// builds is fully validated.
 func (c *Chain) nextHeader() (bookkeeping.BlockHeader, error) {
 	prev, err := c.L.BlockHdr(c.L.Latest())
 	if err != nil {
 		return bookkeeping.BlockHeader{}, err
 	}
-	hdr := bookkeeping.MakeBlock(prev).BlockHeader
 	ts := time.Now().Unix() + c.timeOffset
 	if c.nextTime != 0 {
 		ts = c.nextTime
@@ -197,6 +201,23 @@ func (c *Chain) nextHeader() (bookkeeping.BlockHeader, error) {
 	if ts < prev.TimeStamp {
 		ts = prev.TimeStamp
 	}
+	proto, ok := config.Consensus[prev.CurrentProtocol]
+	if !ok {
+		return bookkeeping.BlockHeader{}, fmt.Errorf("unknown consensus version %s", prev.CurrentProtocol)
+	}
+	if prev.TimeStamp > 0 && ts > prev.TimeStamp+proto.MaxTimestampIncrement {
+		clock := bookkeeping.MakeBlock(prev).BlockHeader
+		clock.TimeStamp = ts
+		vb, err := c.evaluateWith(clock, nil, false)
+		if err != nil {
+			return bookkeeping.BlockHeader{}, fmt.Errorf("clock block: %w", err)
+		}
+		if _, err := c.commitLocked(vb); err != nil {
+			return bookkeeping.BlockHeader{}, err
+		}
+		prev = vb.Block().BlockHeader
+	}
+	hdr := bookkeeping.MakeBlock(prev).BlockHeader
 	hdr.TimeStamp = ts
 	return hdr, nil
 }
@@ -297,54 +318,15 @@ func (c *Chain) AdvanceBlocks(n int) (basics.Round, error) {
 	return rnd, nil
 }
 
-// Simulate evaluates group on top of the latest round without committing.
-// Signatures are checked unless allowEmptySigs is set, in which case
-// unsigned transactions are treated like impersonated ones.
-func (c *Chain) Simulate(group []transactions.SignedTxn, allowEmptySigs bool, tracer logic.EvalTracer) (ledgercore.ValidatedBlock, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	hdr, err := c.nextHeader()
-	if err != nil {
-		return ledgercore.ValidatedBlock{}, err
-	}
-	saved := c.impersonated
-	if allowEmptySigs {
-		c.impersonated = map[basics.Address]bool{}
-		for k := range saved {
-			c.impersonated[k] = true
-		}
-		for _, s := range group {
-			c.impersonated[s.Txn.Sender] = true
-		}
-	}
-	evalGroup, verifyGroup, err := c.prepare(group)
-	c.impersonated = saved
-	if err != nil {
-		return ledgercore.ValidatedBlock{}, err
-	}
-	if _, err := verify.TxnGroup(verifyGroup, &hdr, nil, c.L); err != nil {
-		idx := -1
-		var ge *verify.TxGroupError
-		if errors.As(err, &ge) {
-			idx = ge.GroupIndex
-		}
-		return ledgercore.ValidatedBlock{}, &GroupError{Index: idx, Err: err}
-	}
-	snap := c.L.Snapshot()
-	defer c.L.Revert(snap)
-	saveTracer := c.tracer
-	if tracer != nil {
-		c.tracer = tracer
-	}
-	defer func() { c.tracer = saveTracer }()
-	return c.evaluate(hdr, evalGroup)
+func (c *Chain) evaluate(hdr bookkeeping.BlockHeader, group []transactions.SignedTxn) (ledgercore.ValidatedBlock, error) {
+	return c.evaluateWith(hdr, group, true)
 }
 
-func (c *Chain) evaluate(hdr bookkeeping.BlockHeader, group []transactions.SignedTxn) (ledgercore.ValidatedBlock, error) {
+func (c *Chain) evaluateWith(hdr bookkeeping.BlockHeader, group []transactions.SignedTxn, validate bool) (ledgercore.ValidatedBlock, error) {
 	ev, err := eval.StartEvaluator(c.L, hdr, eval.EvaluatorOptions{
 		PaysetHint: len(group),
 		Generate:   true,
-		Validate:   true,
+		Validate:   validate,
 		Tracer:     c.tracer,
 	})
 	if err != nil {

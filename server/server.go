@@ -19,6 +19,8 @@ import (
 	"github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/model"
 	npprivate "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/nonparticipating/private"
 	nppublic "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/nonparticipating/public"
+	pprivate "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/participating/private"
+	ppublic "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/participating/public"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
 
@@ -146,6 +148,8 @@ func New(n *Node, opts Options) *echo.Echo {
 	}
 	nppublic.RegisterHandlers(e, h, mw...)
 	npprivate.RegisterHandlers(e, h, mw...)
+	ppublic.RegisterHandlers(e, h, mw...)
+	pprivate.RegisterHandlers(e, h, mw...)
 	data.RegisterHandlers(e, h, mw...)
 	experimental.RegisterHandlers(e, h, mw...)
 

@@ -22,6 +22,8 @@ avmfork does not reimplement the AVM. It imports go-algorand and runs its block 
 
 Each submitted group becomes its own block immediately. There is no pool and no consensus.
 
+Block timestamps follow the wall clock plus any warp. Consensus allows a block to be at most 25 seconds newer than its parent, so when the clock has moved further than that (the fork sat idle, or you warped), avmfork first commits one empty block at the new time and then the block you asked for. That empty block is the only one evaluated without go-algorand's header checks.
+
 ## Cheats
 
 The `/avmfork/*` endpoints change the fork directly. Bodies are JSON; byte strings are base64.
