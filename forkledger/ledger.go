@@ -116,6 +116,11 @@ type Ledger struct {
 	genesisID   string
 	st          *state
 
+	// Transaction ids and leases from before the fork; see recent.go.
+	recent     recent
+	recentMu   sync.Mutex
+	recentDone bool
+
 	// OnFetch, if set, is called for every remote read. The differential
 	// tester uses it to check that reads were not stale.
 	OnFetch func(FetchRecord)
@@ -216,13 +221,32 @@ func (l *Ledger) GenesisProto() config.ConsensusParams {
 	return config.Consensus[h.CurrentProtocol]
 }
 
-// CheckDup rejects a transaction id or lease already used on the fork.
-// Transactions confirmed on the real network before the fork round are not
-// tracked.
+// CheckDup rejects a transaction id or lease already used on the fork, or
+// on the network in the blocks before the fork. A transaction with a lease
+// loads those blocks (LoadRecent) if they are not loaded yet; a plain
+// transaction id is checked against them only once they are, since loading
+// takes a thousand block fetches. The avmfork command loads them in the
+// background at startup.
 func (l *Ledger) CheckDup(proto config.ConsensusParams, current, firstValid, lastValid basics.Round, txid transactions.Txid, txl ledgercore.Txlease) error {
+	hasLease := proto.SupportTransactionLeases && txl.Lease != [32]byte{}
+	if hasLease {
+		if err := l.LoadRecent(); err != nil {
+			return fmt.Errorf("load leases from before the fork: %w", err)
+		}
+	}
+	if l.recentLoaded() {
+		if hasLease {
+			if exp, ok := l.recent.leases[txl]; ok && current <= exp {
+				return ledgercore.MakeLeaseInLedgerError(txid, txl, false)
+			}
+		}
+		if lv, ok := l.recent.txids[txid]; ok && lv >= current {
+			return &ledgercore.TransactionInLedgerError{Txid: txid, InBlockEvaluator: false}
+		}
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if proto.SupportTransactionLeases && txl.Lease != [32]byte{} {
+	if hasLease {
 		if e, ok := l.st.leases[txl]; ok && current <= e.expires {
 			return ledgercore.MakeLeaseInLedgerError(txid, txl, false)
 		}

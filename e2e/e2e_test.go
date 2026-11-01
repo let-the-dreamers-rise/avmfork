@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/algorand/go-algorand/crypto"
@@ -223,5 +224,40 @@ func TestWarp(t *testing.T) {
 	}
 	if after.TimeStamp-before.TimeStamp < 30*24*3600 {
 		t.Fatalf("timestamp moved %d s", after.TimeStamp-before.TimeStamp)
+	}
+}
+
+func TestReplayOfMainNetTxnIsDuplicate(t *testing.T) {
+	e := setup(t)
+	if err := e.l.LoadRecent(); err != nil {
+		t.Fatal(err)
+	}
+	// Find a recent ungrouped payment or asset transfer that is still valid.
+	var txn transactions.Transaction
+	for r := e.l.ForkRound(); r > e.l.ForkRound()-20 && txn.Sender.IsZero(); r-- {
+		blk, err := e.l.Remote().Block(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payset, err := blk.DecodePaysetFlat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, st := range payset {
+			tx := st.Txn
+			if (tx.Type == protocol.PaymentTx || tx.Type == protocol.AssetTransferTx) &&
+				tx.Group.IsZero() && tx.LastValid > e.l.Latest()+1 {
+				txn = tx
+				break
+			}
+		}
+	}
+	if txn.Sender.IsZero() {
+		t.Skip("no suitable transaction in the last 20 blocks")
+	}
+	e.cheat("impersonate", map[string]any{"address": txn.Sender.String()})
+	_, err := e.rc.SendRawTransaction(transactions.SignedTxn{Txn: txn})
+	if err == nil || !strings.Contains(err.Error(), "already in ledger") {
+		t.Fatalf("replay of %s: got %v, want already in ledger", txn.ID(), err)
 	}
 }

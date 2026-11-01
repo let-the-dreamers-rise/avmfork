@@ -55,6 +55,15 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	if l.Remote() != nil {
+		// Transaction ids and leases from the last 1000 rounds, so the
+		// duplicate checks match the network's.
+		go func() {
+			if err := l.LoadRecent(); err != nil {
+				fmt.Fprintln(os.Stderr, "avmfork: loading recent transactions:", err)
+			}
+		}()
+	}
 	c := chain.New(l)
 	e := server.New(server.NewNode(c), server.Options{Token: *token})
 

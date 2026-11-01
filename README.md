@@ -50,7 +50,7 @@ algod's dev-mode endpoint `POST /v2/devmode/blocks/offset/{seconds}` also works,
 
 algod only serves its latest state and MainNet moves every ~2.8 seconds. The tester records every remote read and checks it against the node's state deltas. If the two responses differ and something avmfork read changed in between, the case is reported as `stale` and not counted.
 
-Two things are normalized before comparing. algod v5.0.x lists the `initial-states` arrays in Go map order, which is random, so those arrays are sorted on both sides. A replayed transaction that carries a lease is rejected by MainNet, because the original transaction still holds the lease; avmfork does not know leases from before the fork, so it accepts it. That case is counted separately as `known-limit`.
+algod v5.0.x lists some arrays in a simulate response (`initial-states` and the state deltas) in Go map order, which is random, so those arrays are sorted on both sides before comparing.
 
 avmfork is pinned to the go-algorand release MainNet runs (see `GO_ALGORAND_COMMIT` in the Makefile). `tools/sync-upstream.py` re-copies the simulator and the simulate encoder when the pin moves.
 
@@ -72,7 +72,7 @@ You need Go (see `go.mod`), git, make, autoconf, automake and libtool.
 ## Limits
 
 - State is read at the upstream node's latest round, not at the fork round. Reads made a while after forking see newer state. Pin with `--fork-round` only for recent rounds.
-- Transactions and leases confirmed on the real network before the fork are not known to the duplicate and lease checks.
+- Transaction ids and leases from the 1000 rounds before the fork are fetched in the background at startup (a transaction with a lease waits for them). Until that finishes, a plain transaction that duplicates one confirmed on the network just before the fork is not caught.
 - State proof and heartbeat transactions are not supported. Nobody is suspended for absence, and proposer payouts are zero.
 - Simulate runs only on top of the latest fork round.
 - The upstream node must serve `/v2/deltas` for forking (Nodely/AlgoNode public nodes do).
