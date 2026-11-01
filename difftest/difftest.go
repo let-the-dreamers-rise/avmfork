@@ -387,7 +387,7 @@ func (t *Tester) commit(c *Case, forkURL string, group []transactions.SignedTxn,
 	for _, s := range group {
 		raw = append(raw, protocol.Encode(&s)...)
 	}
-	_, code, err := t.postTo(forkURL+"/v2/transactions", "application/x-binary", "", raw)
+	sendBody, code, err := t.postTo(forkURL+"/v2/transactions", "application/x-binary", "", raw)
 	if err != nil {
 		c.Commit, c.CommitDetail = Errored, err.Error()
 		return
@@ -396,7 +396,7 @@ func (t *Tester) commit(c *Case, forkURL string, group []transactions.SignedTxn,
 		if upFailed && code != http.StatusOK {
 			c.Commit = Match // rejected on both
 		} else {
-			c.Commit, c.CommitDetail = Mismatch, fmt.Sprintf("simulate failed: %v, submit HTTP %d", upFailed, code)
+			c.Commit, c.CommitDetail = Mismatch, fmt.Sprintf("simulate failed: %v, submit HTTP %d: %s", upFailed, code, normalizeErr(sendBody))
 		}
 		return
 	}
