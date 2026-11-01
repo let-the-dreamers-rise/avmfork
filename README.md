@@ -56,6 +56,14 @@ avmfork is pinned to the go-algorand release MainNet runs (see `GO_ALGORAND_COMM
 
 CI runs it on every push and once a day. Reports are uploaded as build artifacts.
 
+Results so far (30 MainNet blocks per run, every group in each block):
+
+| Date | avmfork commit | Identical | Different | Stale (not counted) |
+|---|---|---|---|---|
+| 2026-11-01 | `f434470` | 221 | 0 | 8 |
+
+Getting there found four bugs, each fixed with a commit that says what the check showed: avmfork was built on go-algorand's main branch, whose simulate reports opcode budget differently from the v5.0.5 release MainNet runs (`986759b`); accounts with no balance came back from algod with a reward base the ledger does not have (`25f126e`); the balance cheat then paid such accounts every reward since genesis (`2591e48`); and leases held on MainNet from before the fork were unknown (`f434470`).
+
 ## Building
 
 avmfork links go-algorand, which needs go-algorand's own libsodium build:
