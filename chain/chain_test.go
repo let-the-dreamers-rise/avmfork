@@ -304,3 +304,31 @@ func TestClockJump(t *testing.T) {
 		t.Fatalf("next block %d %v", rnd2, err)
 	}
 }
+
+func TestRejectedGroupLeavesNoTrace(t *testing.T) {
+	c := newChain(t)
+	alice, mallory := newKey(t), newKey(t)
+	fund(t, c, alice.addr, 10_000_000)
+	start := c.L.Latest()
+	prev, _ := c.L.BlockHdr(start)
+	want := prev.TimeStamp + 3600
+
+	// The jump needs a clock block, but the group is rejected: neither the
+	// clock block nor the use of the pending timestamp may remain.
+	c.SetNextTimestamp(want)
+	bad := pay(c, t, alice.addr, mallory.addr, 200_000).Sign(mallory.sk)
+	if _, err := c.Submit([]transactions.SignedTxn{bad}); err == nil {
+		t.Fatal("wrong signer accepted")
+	}
+	if c.L.Latest() != start {
+		t.Fatalf("rejected group moved the chain from %d to %d", start, c.L.Latest())
+	}
+	rnd, err := c.AdvanceBlocks(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr, _ := c.L.BlockHdr(rnd)
+	if hdr.TimeStamp != want {
+		t.Fatalf("timestamp %d, want the pending %d", hdr.TimeStamp, want)
+	}
+}

@@ -90,13 +90,6 @@ func (c *Chain) Impersonate(addr basics.Address, on bool) {
 	}
 }
 
-// Impersonating reports whether addr is impersonated.
-func (c *Chain) Impersonating(addr basics.Address) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.impersonated[addr]
-}
-
 // WarpTime moves the clock for future blocks forward by d.
 func (c *Chain) WarpTime(d time.Duration) {
 	c.mu.Lock()
@@ -188,38 +181,53 @@ func (e *GroupError) Unwrap() error { return e.Err }
 // was warped), nextHeader first commits an empty "clock" block at the new
 // time, evaluated without the header checks, so that the block the caller
 // builds is fully validated.
-func (c *Chain) nextHeader() (bookkeeping.BlockHeader, error) {
+//
+// The caller must call the returned done function with whether its block
+// was committed. On failure the clock block is rolled back and a pending
+// SetNextTimestamp is kept, so a rejected group leaves no trace.
+func (c *Chain) nextHeader() (bookkeeping.BlockHeader, func(committed bool), error) {
+	noop := func(bool) {}
 	prev, err := c.L.BlockHdr(c.L.Latest())
 	if err != nil {
-		return bookkeeping.BlockHeader{}, err
+		return bookkeeping.BlockHeader{}, noop, err
 	}
 	ts := time.Now().Unix() + c.timeOffset
 	if c.nextTime != 0 {
 		ts = c.nextTime
-		c.nextTime = 0
 	}
 	if ts < prev.TimeStamp {
 		ts = prev.TimeStamp
 	}
 	proto, ok := config.Consensus[prev.CurrentProtocol]
 	if !ok {
-		return bookkeeping.BlockHeader{}, fmt.Errorf("unknown consensus version %s", prev.CurrentProtocol)
+		return bookkeeping.BlockHeader{}, noop, fmt.Errorf("unknown consensus version %s", prev.CurrentProtocol)
 	}
+	var undo *Snapshot
 	if prev.TimeStamp > 0 && ts > prev.TimeStamp+proto.MaxTimestampIncrement {
+		s := c.snapshotLocked()
+		undo = &s
 		clock := bookkeeping.MakeBlock(prev).BlockHeader
 		clock.TimeStamp = ts
 		vb, err := c.evaluateWith(clock, nil, false)
-		if err != nil {
-			return bookkeeping.BlockHeader{}, fmt.Errorf("clock block: %w", err)
+		if err == nil {
+			_, err = c.commitLocked(vb)
 		}
-		if _, err := c.commitLocked(vb); err != nil {
-			return bookkeeping.BlockHeader{}, err
+		if err != nil {
+			c.revertLocked(s)
+			return bookkeeping.BlockHeader{}, noop, fmt.Errorf("clock block: %w", err)
 		}
 		prev = vb.Block().BlockHeader
 	}
 	hdr := bookkeeping.MakeBlock(prev).BlockHeader
 	hdr.TimeStamp = ts
-	return hdr, nil
+	done := func(committed bool) {
+		if committed {
+			c.nextTime = 0
+		} else if undo != nil {
+			c.revertLocked(*undo)
+		}
+	}
+	return hdr, done, nil
 }
 
 // seedFor gives each fork block a deterministic, distinct seed.
@@ -273,14 +281,20 @@ func (c *Chain) Submit(group []transactions.SignedTxn) (basics.Round, error) {
 			return 0, &GroupError{Index: i, Err: errors.New("state proof transactions are not supported")}
 		}
 	}
-	hdr, err := c.nextHeader()
-	if err != nil {
-		return 0, err
-	}
 	evalGroup, verifyGroup, err := c.prepare(group)
 	if err != nil {
 		return 0, err
 	}
+	hdr, done, err := c.nextHeader()
+	if err != nil {
+		return 0, err
+	}
+	rnd, err := c.submitLocked(hdr, evalGroup, verifyGroup)
+	done(err == nil)
+	return rnd, err
+}
+
+func (c *Chain) submitLocked(hdr bookkeeping.BlockHeader, evalGroup, verifyGroup []transactions.SignedTxn) (basics.Round, error) {
 	if _, err := verify.TxnGroup(verifyGroup, &hdr, nil, c.L); err != nil {
 		idx := -1
 		var ge *verify.TxGroupError
@@ -302,15 +316,15 @@ func (c *Chain) AdvanceBlocks(n int) (basics.Round, error) {
 	defer c.mu.Unlock()
 	var rnd basics.Round
 	for i := 0; i < n; i++ {
-		hdr, err := c.nextHeader()
+		hdr, done, err := c.nextHeader()
 		if err != nil {
 			return 0, err
 		}
 		vb, err := c.evaluate(hdr, nil)
-		if err != nil {
-			return 0, err
+		if err == nil {
+			rnd, err = c.commitLocked(vb)
 		}
-		rnd, err = c.commitLocked(vb)
+		done(err == nil)
 		if err != nil {
 			return 0, err
 		}
@@ -373,24 +387,34 @@ func (c *Chain) commitLocked(vb ledgercore.ValidatedBlock) (basics.Round, error)
 
 // Snapshot saves the fork's state and its block history.
 type Snapshot struct {
-	ledger forkledger.Snapshot
-	round  basics.Round
-	offset int64
+	ledger   forkledger.Snapshot
+	round    basics.Round
+	offset   int64
+	nextTime int64
 }
 
 // Snapshot saves the current state.
 func (c *Chain) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return Snapshot{ledger: c.L.Snapshot(), round: c.L.Latest(), offset: c.timeOffset}
+	return c.snapshotLocked()
+}
+
+func (c *Chain) snapshotLocked() Snapshot {
+	return Snapshot{ledger: c.L.Snapshot(), round: c.L.Latest(), offset: c.timeOffset, nextTime: c.nextTime}
 }
 
 // Revert restores a snapshot and forgets the blocks produced after it.
 func (c *Chain) Revert(s Snapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.revertLocked(s)
+}
+
+func (c *Chain) revertLocked(s Snapshot) {
 	c.L.Revert(s.ledger)
 	c.timeOffset = s.offset
+	c.nextTime = s.nextTime
 	for r := range c.blocks {
 		if r > s.round {
 			delete(c.blocks, r)

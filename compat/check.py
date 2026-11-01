@@ -56,7 +56,9 @@ fb = fork.application_boxes(BOX_APP)["boxes"]
 ub = up.application_boxes(BOX_APP)["boxes"]
 ok(sorted(b["name"] for b in fb) == sorted(b["name"] for b in ub), f"application_boxes lists the same {len(ub)} boxes")
 name = base64.b64decode(ub[0]["name"])
-ok(fork.application_box_by_name(BOX_APP, name) == up.application_box_by_name(BOX_APP, name), "box value equals MainNet")
+fbox, ubox = fork.application_box_by_name(BOX_APP, name), up.application_box_by_name(BOX_APP, name)
+ok((fbox["name"], fbox["value"]) == (ubox["name"], ubox["value"]), "box value equals MainNet")
+ok(fbox["round"] == fork.status()["last-round"], "box response carries the fork's round")
 
 fh = fork.account_asset_info(USDC_RESERVE, USDC)["asset-holding"]["amount"]
 uh = up.account_asset_info(USDC_RESERVE, USDC)["asset-holding"]["amount"]

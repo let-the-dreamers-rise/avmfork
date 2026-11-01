@@ -99,6 +99,18 @@ package server
     src = edit(src, "TraceConfig:           request.ExecTraceConfig,",
                "TraceConfig:           simulation.ExecTraceConfig{Enable: request.ExecTraceConfig.Enable, Stack: request.ExecTraceConfig.Stack, Scratch: request.ExecTraceConfig.Scratch, State: request.ExecTraceConfig.State},", p)
     open(os.path.join(HERE, "server/algodutils.go"), "w").write(src)
+
+    tag = subprocess.run(["git", "-C", ga, "describe", "--tags", "--exact-match"],
+                         capture_output=True, text=True).stdout.strip()
+    release = f"release {tag}, commit\n{commit}" if tag else f"commit {commit}"
+    open(os.path.join(HERE, "internal/simulation/NOTICE.md"), "w").write(f"""This package is a copy of go-algorand's `ledger/simulation` package
+(github.com/algorand/go-algorand, {release}, Copyright (C) 2019-2026 Algorand
+Foundation Ltd., AGPL-3.0). `tools/sync-upstream.py` makes the copy.
+
+avmfork's only change: `simulator.go` takes any ledger that the block evaluator
+accepts (`Ledger` interface) instead of `*data.Ledger`, so the simulate endpoint
+runs against the fork. Everything else is unchanged so results match algod.
+""")
     subprocess.check_call(["gofmt", "-w", os.path.join(HERE, "server/algodutils.go"), os.path.join(HERE, "internal/simulation")])
     print("synced from", commit)
 

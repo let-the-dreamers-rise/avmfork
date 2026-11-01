@@ -17,8 +17,7 @@ import (
 // would. A transaction confirmed at round r is valid until at most
 // r + MaxTxnLife, so only the last MaxTxnLife blocks matter.
 type recent struct {
-	once   sync.Once
-	err    error
+	load   sync.Mutex                          // held while loading
 	txids  map[transactions.Txid]basics.Round  // last valid round
 	leases map[ledgercore.Txlease]basics.Round // expires
 }
@@ -27,11 +26,16 @@ type recent struct {
 const recentParallel = 16
 
 // LoadRecent fetches the blocks before the fork round and indexes their
-// transaction ids and leases. It runs once; later calls return the first
-// result. A fork with no upstream has nothing to load.
+// transaction ids and leases. Once it has succeeded, later calls return at
+// once; after a failure (the upstream was unreachable) the next call tries
+// again. A fork with no upstream has nothing to load.
 func (l *Ledger) LoadRecent() error {
-	l.recent.once.Do(func() { l.recent.err = l.loadRecent() })
-	return l.recent.err
+	l.recent.load.Lock()
+	defer l.recent.load.Unlock()
+	if l.recentLoaded() {
+		return nil
+	}
+	return l.loadRecent()
 }
 
 func (l *Ledger) recentLoaded() bool {
@@ -41,14 +45,10 @@ func (l *Ledger) recentLoaded() bool {
 }
 
 func (l *Ledger) loadRecent() error {
-	defer func() {
-		l.recentMu.Lock()
-		l.recentDone = true
-		l.recentMu.Unlock()
-	}()
 	l.recent.txids = map[transactions.Txid]basics.Round{}
 	l.recent.leases = map[ledgercore.Txlease]basics.Round{}
 	if l.remote == nil {
+		l.markRecentLoaded()
 		return nil
 	}
 	l.mu.Lock()
@@ -125,5 +125,15 @@ func (l *Ledger) loadRecent() error {
 			}
 		}
 	}
-	return firstErr
+	if firstErr != nil {
+		return firstErr
+	}
+	l.markRecentLoaded()
+	return nil
+}
+
+func (l *Ledger) markRecentLoaded() {
+	l.recentMu.Lock()
+	l.recentDone = true
+	l.recentMu.Unlock()
 }

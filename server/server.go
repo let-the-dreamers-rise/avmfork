@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -116,7 +117,13 @@ func New(n *Node, opts Options) *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 	e.Pre(middleware.RemoveTrailingSlash())
+	// Browser tools such as Lora need CORS to talk to a local node. The
+	// /avmfork control endpoints get no CORS headers, so a web page cannot
+	// call them from the browser.
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		Skipper: func(c echo.Context) bool {
+			return strings.HasPrefix(c.Request().URL.Path, "/avmfork")
+		},
 		AllowOrigins: []string{"*"},
 		AllowHeaders: []string{"*"},
 	}))

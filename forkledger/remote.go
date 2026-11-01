@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
+	"time"
 
 	"github.com/algorand/go-algorand/daemon/algod/api/client"
 	v2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2"
@@ -35,7 +37,24 @@ func NewRemote(rawURL, token string) (*Remote, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bad algod url %q: %w", rawURL, err)
 	}
+	setUpstreamTimeout()
 	return &Remote{rc: client.MakeRestClient(*u, token)}, nil
+}
+
+// upstreamTimeout bounds how long avmfork waits for the upstream node to
+// start answering. go-algorand's REST client uses http.DefaultTransport
+// with no timeout, so a hung upstream would otherwise hang every request
+// to the fork.
+const upstreamTimeout = 30 * time.Second
+
+var timeoutOnce sync.Once
+
+func setUpstreamTimeout() {
+	timeoutOnce.Do(func() {
+		if t, ok := http.DefaultTransport.(*http.Transport); ok {
+			t.ResponseHeaderTimeout = upstreamTimeout
+		}
+	})
 }
 
 func isNotFound(err error) bool {

@@ -3,6 +3,7 @@ package forkledger
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/algorand/avm-abi/apps"
@@ -114,7 +115,8 @@ type Ledger struct {
 	forkRound   basics.Round
 	genesisHash crypto.Digest
 	genesisID   string
-	st          *state
+	st          *state // the fork's state: everything written locally
+	base        *state // upstream values as first read; never written to
 
 	// Transaction ids and leases from before the fork; see recent.go.
 	recent     recent
@@ -152,6 +154,7 @@ func OpenAt(remote *Remote, rnd basics.Round) (*Ledger, error) {
 		genesisHash: blk.GenesisHash(),
 		genesisID:   blk.GenesisID(),
 		st:          newState(),
+		base:        newState(),
 	}
 	l.st.latest = rnd
 	l.st.totals = delta.Totals
@@ -199,6 +202,9 @@ func (l *Ledger) blockHdrLocked(rnd basics.Round) (bookkeeping.BlockHeader, erro
 	if h, ok := l.st.hdrs[rnd]; ok {
 		return h, nil
 	}
+	if h, ok := l.base.hdrs[rnd]; ok {
+		return h, nil
+	}
 	if rnd > l.forkRound || l.remote == nil {
 		return bookkeeping.BlockHeader{}, fmt.Errorf("no header for round %d", rnd)
 	}
@@ -206,7 +212,7 @@ func (l *Ledger) blockHdrLocked(rnd basics.Round) (bookkeeping.BlockHeader, erro
 	if err != nil {
 		return bookkeeping.BlockHeader{}, err
 	}
-	l.st.hdrs[rnd] = blk.BlockHeader
+	l.base.hdrs[rnd] = blk.BlockHeader
 	return blk.BlockHeader, nil
 }
 
@@ -272,6 +278,9 @@ func (l *Ledger) accountLocked(addr basics.Address) (ledgercore.AccountData, err
 	if ad, ok := l.st.accts[addr]; ok {
 		return ad, nil
 	}
+	if ad, ok := l.base.accts[addr]; ok {
+		return ad, nil
+	}
 	if l.remote == nil {
 		return ledgercore.AccountData{}, nil
 	}
@@ -280,7 +289,7 @@ func (l *Ledger) accountLocked(addr basics.Address) (ledgercore.AccountData, err
 		return ledgercore.AccountData{}, fmt.Errorf("fetch account %s: %w", addr, err)
 	}
 	l.note("acct", addr.String(), r)
-	l.st.accts[addr] = ad
+	l.base.accts[addr] = ad
 	return ad, nil
 }
 
@@ -321,6 +330,9 @@ func (l *Ledger) assetLocked(addr basics.Address, aidx basics.AssetIndex) (ledge
 	if r, ok := l.st.assets[key]; ok {
 		return r, nil
 	}
+	if r, ok := l.base.assets[key]; ok {
+		return r, nil
+	}
 	if l.remote == nil {
 		return ledgercore.AssetResource{}, nil
 	}
@@ -329,7 +341,7 @@ func (l *Ledger) assetLocked(addr basics.Address, aidx basics.AssetIndex) (ledge
 		return ledgercore.AssetResource{}, fmt.Errorf("fetch asset %d of %s: %w", aidx, addr, err)
 	}
 	l.note("asset", fmt.Sprintf("%s/%d", addr, aidx), fr)
-	l.st.assets[key] = r
+	l.base.assets[key] = r
 	return r, nil
 }
 
@@ -348,6 +360,9 @@ func (l *Ledger) appLocked(addr basics.Address, aidx basics.AppIndex) (ledgercor
 	if r, ok := l.st.apps[key]; ok {
 		return r, nil
 	}
+	if r, ok := l.base.apps[key]; ok {
+		return r, nil
+	}
 	if l.remote == nil {
 		return ledgercore.AppResource{}, nil
 	}
@@ -356,7 +371,7 @@ func (l *Ledger) appLocked(addr basics.Address, aidx basics.AppIndex) (ledgercor
 		return ledgercore.AppResource{}, fmt.Errorf("fetch app %d of %s: %w", aidx, addr, err)
 	}
 	l.note("app", fmt.Sprintf("%s/%d", addr, aidx), fr)
-	l.st.apps[key] = r
+	l.base.apps[key] = r
 	return r, nil
 }
 
@@ -367,11 +382,13 @@ func (l *Ledger) LookupKv(rnd basics.Round, key string) ([]byte, error) {
 	if err := l.checkRound(rnd); err != nil {
 		return nil, err
 	}
-	if v, ok := l.st.kvs[key]; ok {
-		if v == nil {
-			return nil, nil
+	for _, m := range []map[string]*[]byte{l.st.kvs, l.base.kvs} {
+		if v, ok := m[key]; ok {
+			if v == nil {
+				return nil, nil
+			}
+			return *v, nil
 		}
-		return *v, nil
 	}
 	if l.remote == nil {
 		return nil, nil
@@ -386,9 +403,9 @@ func (l *Ledger) LookupKv(rnd basics.Round, key string) ([]byte, error) {
 	}
 	l.note("box", key, fr)
 	if v == nil {
-		l.st.kvs[key] = nil
+		l.base.kvs[key] = nil
 	} else {
-		l.st.kvs[key] = &v
+		l.base.kvs[key] = &v
 	}
 	return v, nil
 }
@@ -408,6 +425,9 @@ func (l *Ledger) creatorLocked(cidx basics.CreatableIndex, ctype basics.Creatabl
 	if c, ok := l.st.creators[key]; ok {
 		return c.addr, c.exists, nil
 	}
+	if c, ok := l.base.creators[key]; ok {
+		return c.addr, c.exists, nil
+	}
 	if l.remote == nil {
 		return basics.Address{}, false, nil
 	}
@@ -425,7 +445,7 @@ func (l *Ledger) creatorLocked(cidx basics.CreatableIndex, ctype basics.Creatabl
 	if err != nil {
 		return basics.Address{}, false, err
 	}
-	l.st.creators[key] = creatorEntry{addr: addr, exists: ok}
+	l.base.creators[key] = creatorEntry{addr: addr, exists: ok}
 	return addr, ok, nil
 }
 
@@ -542,8 +562,8 @@ func (l *Ledger) Snapshot() Snapshot {
 	return Snapshot{st: l.st.clone()}
 }
 
-// Revert restores a saved state. Reads made from the remote node after the
-// snapshot are dropped too; they will be fetched again if needed.
+// Revert restores a saved state. Values already read from the remote node
+// are kept, so a test rerun after a revert sees the same upstream state.
 func (l *Ledger) Revert(s Snapshot) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -555,40 +575,6 @@ func (l *Ledger) Account(addr basics.Address) (ledgercore.AccountData, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.accountLocked(addr)
-}
-
-// SetAccount overwrites base account data (balance, auth address, status).
-// The resource counters are kept consistent by the caller.
-func (l *Ledger) SetAccount(addr basics.Address, ad ledgercore.AccountData) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.st.accts[addr] = ad
-}
-
-// App returns addr's resources for app aidx.
-func (l *Ledger) App(addr basics.Address, aidx basics.AppIndex) (ledgercore.AppResource, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.appLocked(addr, aidx)
-}
-
-// SetApp overwrites addr's resources for app aidx.
-func (l *Ledger) SetApp(addr basics.Address, aidx basics.AppIndex, r ledgercore.AppResource) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.st.apps[ledgercore.AccountApp{Address: addr, App: aidx}] = r
-}
-
-// Asset returns addr's resources for asset aidx.
-func (l *Ledger) Asset(addr basics.Address, aidx basics.AssetIndex) (ledgercore.AssetResource, error) {
-	return l.LookupAsset(l.Latest(), addr, aidx)
-}
-
-// SetAsset overwrites addr's resources for asset aidx.
-func (l *Ledger) SetAsset(addr basics.Address, aidx basics.AssetIndex, r ledgercore.AssetResource) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.st.assets[ledgercore.AccountAsset{Address: addr, Asset: aidx}] = r
 }
 
 // Creator returns the creator of an asset or app.
@@ -603,53 +589,27 @@ func (l *Ledger) Box(app basics.AppIndex, name string) ([]byte, error) {
 	return l.LookupKv(l.Latest(), apps.MakeBoxKey(uint64(app), name))
 }
 
-// SetBox overwrites a box value; nil deletes the box. The app account's box
-// counters are not changed.
-func (l *Ledger) SetBox(app basics.AppIndex, name string, value []byte) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	key := apps.MakeBoxKey(uint64(app), name)
-	if value == nil {
-		l.st.kvs[key] = nil
-		return
-	}
-	v := append([]byte{}, value...)
-	l.st.kvs[key] = &v
-}
-
-// Totals returns the latest totals.
-func (l *Ledger) Totals() ledgercore.AccountTotals {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.st.totals
-}
-
-// SetTotals overwrites the totals, used after a balance cheat so that the
-// money supply stays consistent.
-func (l *Ledger) SetTotals(t ledgercore.AccountTotals) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.st.totals = t
-}
-
 // Remote returns the upstream node, or nil.
 func (l *Ledger) Remote() *Remote { return l.remote }
 
 // LocalResources returns the asset and app resources of addr that the fork
-// has read or changed. They override what the remote node reports.
+// has read or changed, as the evaluator sees them. They override what the
+// remote node reports now.
 func (l *Ledger) LocalResources(addr basics.Address) (map[basics.AssetIndex]ledgercore.AssetResource, map[basics.AppIndex]ledgercore.AppResource) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	as := map[basics.AssetIndex]ledgercore.AssetResource{}
-	for k, v := range l.st.assets {
-		if k.Address == addr {
-			as[k.Asset] = v
-		}
-	}
 	ap := map[basics.AppIndex]ledgercore.AppResource{}
-	for k, v := range l.st.apps {
-		if k.Address == addr {
-			ap[k.App] = v
+	for _, st := range []*state{l.base, l.st} {
+		for k, v := range st.assets {
+			if k.Address == addr {
+				as[k.Asset] = v
+			}
+		}
+		for k, v := range st.apps {
+			if k.Address == addr {
+				ap[k.App] = v
+			}
 		}
 	}
 	return as, ap
@@ -661,9 +621,11 @@ func (l *Ledger) LocalBoxes(prefix string) map[string]bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := map[string]bool{}
-	for k, v := range l.st.kvs {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			out[k] = v != nil
+	for _, st := range []*state{l.base, l.st} {
+		for k, v := range st.kvs {
+			if strings.HasPrefix(k, prefix) {
+				out[k] = v != nil
+			}
 		}
 	}
 	return out

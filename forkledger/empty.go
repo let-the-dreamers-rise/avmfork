@@ -43,6 +43,7 @@ func NewEmpty(genesisID string, timestamp int64) (*Ledger, error) {
 		genesisHash: genesisHash,
 		genesisID:   genesisID,
 		st:          newState(),
+		base:        newState(),
 	}
 	var ot basics.OverflowTracker
 	for addr, ad := range balances {
