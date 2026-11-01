@@ -56,13 +56,16 @@ avmfork is pinned to the go-algorand release MainNet runs (see `GO_ALGORAND_COMM
 
 CI runs it on every push and once a day. Reports are uploaded as build artifacts.
 
-Results so far (30 MainNet blocks per run, every group in each block):
+Results of the run on 2026-11-01 (commit `f5a5c5a`, CI run 41289006381):
 
-| Date | avmfork commit | Identical | Different | Stale (not counted) |
-|---|---|---|---|---|
-| 2026-11-01 | `f434470` | 221 | 0 | 8 |
+| Run | Groups compared | Identical | of which succeeded / with app calls / failed on both | Commit path identical | Stale (not counted) |
+|---|---|---|---|---|---|
+| 30 blocks, all groups | 151 | 151 | 100 / 26 / 51 | 151 | 8 |
+| 60 blocks, app calls only | 105 | 105 | 62 / 62 / 43 | 105 | 8 |
 
-Getting there found four bugs, each fixed with a commit that says what the check showed: avmfork was built on go-algorand's main branch, whose simulate reports opcode budget differently from the v5.0.5 release MainNet runs (`986759b`); accounts with no balance came back from algod with a reward base the ledger does not have (`25f126e`); the balance cheat then paid such accounts every reward since genesis (`2591e48`); and leases held on MainNet from before the fork were unknown (`f434470`).
+"Commit path" means the group was also sent to the fork as real transactions (`-commit`), and each committed transaction's record matched the MainNet node's simulate result.
+
+Getting there found five bugs, each fixed with a commit that says what the check showed: avmfork was built on go-algorand's main branch, whose simulate reports opcode budget differently from the v5.0.5 release MainNet runs (`986759b`); accounts with no balance came back from algod with a reward base the ledger does not have (`25f126e`); the balance cheat then paid such accounts every reward since genesis (`2591e48`); leases held on MainNet from before the fork were unknown (`f434470`); and some MainNet state deltas could not be decoded, so forking at those rounds failed.
 
 ## Building
 
