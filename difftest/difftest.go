@@ -73,6 +73,14 @@ type Case struct {
 	Failed      bool         `json:"failed-on-both,omitempty"`
 	AppCalls    int          `json:"app-calls"`
 	Fetches     int          `json:"remote-reads"`
+
+	// Commit is the result of also sending the group to the fork as real
+	// transactions (impersonating the senders) and comparing what the
+	// committed block records with upstream's simulate result. Empty if
+	// the commit check was not run or the simulate check did not match.
+	Commit       Outcome `json:"commit,omitempty"`
+	CommitDetail string  `json:"commit-detail,omitempty"`
+
 	// Upstream and Fork are kept only for mismatches.
 	Upstream json.RawMessage `json:"upstream,omitempty"`
 	Fork     json.RawMessage `json:"fork,omitempty"`
@@ -84,6 +92,10 @@ type Tester struct {
 	Token  string
 	Remote *forkledger.Remote
 	Client *http.Client
+
+	// CheckCommit also runs each matching group through the fork's normal
+	// submit path; see Case.Commit.
+	CheckCommit bool
 
 	deltaMu sync.Mutex
 	deltas  map[basics.Round]touched
@@ -269,6 +281,9 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 	c.Fetches = len(reads)
 
 	t.judge(&c, upCode, forkCode, upBody, forkBody)
+	if c.Outcome == Match && t.CheckCommit && upCode == http.StatusOK {
+		t.commit(&c, srv.URL, group, upBody)
+	}
 	if c.Outcome != Mismatch {
 		return c
 	}
@@ -338,6 +353,99 @@ func (t *Tester) judge(c *Case, upCode, forkCode int, upBody, forkBody []byte) {
 	c.Outcome = Mismatch
 	c.Detail = firstDiff("", a, b)
 	c.Upstream, c.Fork = upBody, forkBody
+}
+
+// commit sends group to the fork at forkURL through POST /v2/transactions,
+// with every sender impersonated, and compares each committed
+// transaction's pending-transaction record with the txn-result that the
+// upstream's simulate returned for it. This covers the code a user's
+// transactions go through: block building, evaluation with real
+// validation, commit, and the confirmed-transaction API.
+func (t *Tester) commit(c *Case, forkURL string, group []transactions.SignedTxn, upBody []byte) {
+	var up map[string]any
+	if err := json.Unmarshal(upBody, &up); err != nil {
+		c.Commit, c.CommitDetail = Errored, err.Error()
+		return
+	}
+	g, _ := firstGroup(up)
+	upFailed := g["failure-message"] != nil
+	results, _ := g["txn-results"].([]any)
+
+	for _, s := range group {
+		body, _ := json.Marshal(map[string]any{"address": s.Txn.Sender.String()})
+		if _, code, err := t.post(forkURL+"/avmfork/impersonate", "", body); err != nil || code != http.StatusOK {
+			c.Commit, c.CommitDetail = Errored, fmt.Sprintf("impersonate: %v (HTTP %d)", err, code)
+			return
+		}
+	}
+	var raw []byte
+	for _, s := range group {
+		raw = append(raw, protocol.Encode(&s)...)
+	}
+	_, code, err := t.post(forkURL+"/v2/transactions", "", raw)
+	if err != nil {
+		c.Commit, c.CommitDetail = Errored, err.Error()
+		return
+	}
+	if upFailed || code != http.StatusOK {
+		if upFailed && code != http.StatusOK {
+			c.Commit = Match // rejected on both
+		} else {
+			c.Commit, c.CommitDetail = Mismatch, fmt.Sprintf("simulate failed: %v, submit HTTP %d", upFailed, code)
+		}
+		return
+	}
+	if len(results) != len(group) {
+		c.Commit, c.CommitDetail = Mismatch, fmt.Sprintf("%d simulate results for %d transactions", len(results), len(group))
+		return
+	}
+	for i, s := range group {
+		resp, err := t.Client.Get(fmt.Sprintf("%s/v2/transactions/pending/%s?format=json", forkURL, s.ID()))
+		if err != nil {
+			c.Commit, c.CommitDetail = Errored, err.Error()
+			return
+		}
+		b, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			c.Commit, c.CommitDetail = Errored, fmt.Sprintf("pending %s: HTTP %d %v", s.ID(), resp.StatusCode, err)
+			return
+		}
+		var got map[string]any
+		if err := json.Unmarshal(b, &got); err != nil {
+			c.Commit, c.CommitDetail = Errored, err.Error()
+			return
+		}
+		r, _ := results[i].(map[string]any)
+		want, _ := r["txn-result"].(map[string]any)
+		normalizePending(got)
+		normalizePending(want)
+		if !reflect.DeepEqual(want, got) {
+			c.Commit, c.CommitDetail = Mismatch, fmt.Sprintf("txn %d: %s", i, firstDiff("", want, got))
+			return
+		}
+	}
+	c.Commit = Match
+}
+
+// normalizePending drops the fields of a pending-transaction record that
+// differ between a simulation and a commit by design: the confirmed round,
+// and the signer the fork records for an impersonated, rekeyed sender
+// (simulate leaves it out).
+func normalizePending(m map[string]any) {
+	delete(m, "confirmed-round")
+	delete(m, "pool-error")
+	if st, ok := m["txn"].(map[string]any); ok {
+		delete(st, "sgnr")
+	}
+	sortUnordered(m)
+	if inner, ok := m["inner-txns"].([]any); ok {
+		for _, x := range inner {
+			if im, ok := x.(map[string]any); ok {
+				normalizePending(im)
+			}
+		}
+	}
 }
 
 // unorderedLists are the response arrays that algod (v5.0.x) fills by

@@ -45,7 +45,10 @@ jobs:
           key: go-algorand-${{ hashFiles('Makefile') }}
       - run: make build
       - name: Replay recent MainNet groups on avmfork and on a MainNet node
-        run: ./bin/avmfork-difftest -blocks 30 -per-block 0 -out difftest-out
+        run: ./bin/avmfork-difftest -blocks 30 -per-block 0 -commit -out difftest-out
+      - name: Same, app calls only, over more blocks
+        if: always()
+        run: ./bin/avmfork-difftest -blocks 150 -per-block 0 -app-calls-only -commit -out difftest-out/apps
       - if: always()
         uses: actions/upload-artifact@v4
         with:

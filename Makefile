@@ -39,7 +39,7 @@ e2e: deps
 	AVMFORK_E2E=1 go test -count=1 -v ./e2e/
 
 difftest: build
-	./bin/avmfork-difftest -blocks 20 -per-block 0 -out difftest-out
+	./bin/avmfork-difftest -blocks 30 -per-block 0 -commit -out difftest-out
 
 clean:
 	rm -rf bin difftest-out go.work go.work.sum
