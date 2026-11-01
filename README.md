@@ -10,13 +10,13 @@ avmfork: algod API on http://127.0.0.1:4002
 
 `avmfork --fork none` starts an empty chain instead: no Docker, no upstream, a new block per transaction group. Fund accounts with `/avmfork/set-balance`.
 
-Point algosdk, AlgoKit utils, a generated app client or Lora at `http://127.0.0.1:4002` and you are talking to a copy of MainNet. Accounts, apps, boxes and assets are loaded from the upstream node the first time they are read. Every change you make stays local.
+Point algosdk, AlgoKit utils, a generated app client or Lora at `http://127.0.0.1:4002`. Accounts, apps, boxes and assets are read from the upstream node the first time they are touched (at the node's latest round, see Limits) and kept from then on. Every change you make stays local.
 
 ## Why
 
 LocalNet starts empty, so a test that touches a real protocol (a DEX pool, a lending market, the xGov registry) has to redeploy and reseed it, and the result is only as good as the reseeding. The language-level emulators (`algorand-python-testing`, `algorand-typescript-testing`) do not run the compiled program at all. Simulate on a public node runs the real program on real state, but only one group at a time and with nothing carried over.
 
-avmfork is the missing piece: real state, the real evaluator, and as many blocks as you want on top.
+avmfork runs the real evaluator on real state and keeps the result, block after block.
 
 ## How it works
 
@@ -84,6 +84,9 @@ You need Go (see `go.mod`), git, make, autoconf, automake and libtool.
 - State proof and heartbeat transactions are not supported. Nobody is suspended for absence, and proposer payouts are zero.
 - Simulate runs only on top of the latest fork round.
 - The upstream node must serve `/v2/deltas` for forking (Nodely/AlgoNode public nodes do).
+- `GET /v2/accounts/{addr}` asks the upstream node for the full account each time, and box listings page through all of an app's boxes upstream. Slow for accounts with many assets or apps with many boxes.
+- Cheats change what you tell them to and keep the money totals and the account's counters right, but nothing else: `set-asset-holding` does not take the amount from the creator's reserve, and `set-box` does not check the app account's minimum balance.
+- The control endpoints (`/avmfork/*`) are open to anything that can reach the port. They send no CORS headers, so web pages can't call them, and the default listen address is 127.0.0.1. Use `--token` if you expose the port.
 
 ## License
 
