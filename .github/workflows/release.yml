@@ -49,4 +49,8 @@ jobs:
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Binaries built by this workflow from the tagged commit. Source and build steps: README.md." avmfork-*.tar.gz*
+        run: |
+          # The release may already exist if it was created on github.com.
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Binaries built by the release workflow from the tagged commit. Source and build steps: README.md."
+          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber avmfork-*.tar.gz*
