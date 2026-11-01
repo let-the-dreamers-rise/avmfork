@@ -94,6 +94,13 @@ func (r *Remote) Account(addr basics.Address) (ledgercore.AccountData, basics.Ro
 }
 
 func accountFromModel(m *model.Account) (ledgercore.AccountData, error) {
+	// An account with no algos does not exist in the ledger: the network
+	// deletes an account when its balance reaches zero. algod still answers
+	// for it, with a reward base set to the current rewards level, which the
+	// evaluator would otherwise see (and print in overspend errors).
+	if m.Amount == 0 && m.AmountWithoutPendingRewards == 0 {
+		return ledgercore.AccountData{}, nil
+	}
 	// Only the base data is wanted. Strip any resource lists so the
 	// conversion does not count them; the totals come from the node.
 	base := *m

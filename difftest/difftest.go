@@ -346,6 +346,9 @@ var unorderedLists = map[string]bool{
 	"app-initial-states": true,
 	"app-locals":         true,
 	"kvs":                true,
+	"global-state-delta": true,
+	"local-state-delta":  true,
+	"delta":              true,
 }
 
 // sortUnordered sorts those arrays, everywhere in v, by their JSON text.
@@ -369,8 +372,9 @@ func sortUnordered(v any) {
 	}
 }
 
-// isLeaseFromBeforeFork reports whether the only difference is that the
-// upstream rejected the group for a lease it already has on record.
+// isLeaseFromBeforeFork reports whether the upstream rejected the group for
+// a lease it has on record and avmfork, which cannot know that lease, did
+// not. (avmfork then runs the group further and may fail somewhere else.)
 func isLeaseFromBeforeFork(up, fork map[string]any) bool {
 	g, ok := firstGroup(up)
 	if !ok {
@@ -381,7 +385,11 @@ func isLeaseFromBeforeFork(up, fork map[string]any) bool {
 		return false
 	}
 	fg, ok := firstGroup(fork)
-	return ok && fg["failure-message"] == nil
+	if !ok {
+		return false
+	}
+	fmsg, _ := fg["failure-message"].(string)
+	return !strings.Contains(fmsg, "using an overlapping lease")
 }
 
 func firstGroup(resp map[string]any) (map[string]any, bool) {
