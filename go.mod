@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/algorand/avm-abi v0.2.0
-	github.com/algorand/go-algorand v0.0.0-20261030195722-66fdf4ad6047
+	github.com/algorand/go-algorand v0.0.0-20261026211510-31186e99a69e
 	github.com/algorand/go-codec/codec v1.1.10
 	github.com/labstack/echo/v4 v4.15.3
 	golang.org/x/sync v0.22.0

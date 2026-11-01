@@ -15,7 +15,7 @@
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
 // avmfork: copied from go-algorand daemon/algod/api/server/v2/utils.go at
-// commit 66fdf4ad60479aa41e66cc39b65e7ed118834616 so that simulate results
+// commit 31186e99a69e74483ad95e9ce872903b74758abf by tools/sync-upstream.py, so that simulate results
 // from avmfork's copy of the simulator are encoded exactly like algod's.
 // Only the package name, the simulation import and type qualifiers changed.
 
@@ -322,10 +322,10 @@ func edIndexToAddress(index uint64, txn *transactions.Transaction, shared []basi
 	switch {
 	case index == 0:
 		return txn.Sender.String()
-	case index-1 < uint64(len(txn.Accounts)):
+	case int(index-1) < len(txn.Accounts):
 		return txn.Accounts[index-1].String()
-	case index-1-uint64(len(txn.Accounts)) < uint64(len(shared)):
-		return shared[index-1-uint64(len(txn.Accounts))].String()
+	case int(index-1)-len(txn.Accounts) < len(shared):
+		return shared[int(index-1)-len(txn.Accounts)].String()
 	default:
 		return fmt.Sprintf("Invalid Account Index %d in LocalDelta", index)
 	}

@@ -121,15 +121,9 @@ func MakeSimulator(ledger Ledger, developerAPI bool) *Simulator {
 // category set. There are two placeholders forms:
 // - Scheme-only placeholder: Scheme set, PublicKey empty, Signature empty, for fee surcharge calculation
 // - Full placeholder: Scheme, Salt, and PublicKey set, Signature empty, for authorizer address derivation
-// An ls-scheme PQSig is never a placeholder. Empty Signature
-// bytes there mean a program that takes no arguments, which is a complete
-// authorization: the program must be evaluated and traced, not swapped for a
-// proxy signature. Nothing is missing from it, either, since the address
-// commits to the program and the program is what the fee is charged for.
 func isPlaceholderPQSig(txn transactions.SignedTxn) bool {
 	return txn.Sig.Blank() && txn.Msig.Blank() && txn.Lsig.Blank() &&
-		!txn.PQsig.Blank() && len(txn.PQsig.Signature) == 0 &&
-		!txn.PQsig.IsLogicSig()
+		!txn.PQsig.Blank() && len(txn.PQsig.Signature) == 0
 }
 
 func validatePlaceholderPQSig(proto config.ConsensusParams, pqSig transactions.PQSig, authorizer basics.Address, fixSigners bool) error {
@@ -143,17 +137,11 @@ func validatePlaceholderPQSig(proto config.ConsensusParams, pqSig transactions.P
 // nested in its LogicSig: a program with a non-blank nested PQ envelope with
 // empty signature bytes and no other signature category set on either the
 // transaction or the LogicSig.
-// An ls-scheme nested PQSig is never a placeholder. A PQ LogicSig account
-// authorizes only by evaluating its own program, so it cannot delegate to
-// another program, and consensus rejects any such delegation. Treating it as a
-// placeholder would let simulation succeed for a transaction that can never be
-// valid.
 func isPlaceholderDelegatedPQSig(txn transactions.SignedTxn) bool {
 	return txn.Sig.Blank() && txn.Msig.Blank() && txn.PQsig.Blank() &&
 		txn.Lsig.HasProgram() && txn.Lsig.Sig.Blank() &&
 		txn.Lsig.Msig.Blank() && txn.Lsig.LMsig.Blank() &&
-		!txn.Lsig.PQsig.Blank() && len(txn.Lsig.PQsig.Signature) == 0 &&
-		!txn.Lsig.PQsig.IsLogicSig()
+		!txn.Lsig.PQsig.Blank() && len(txn.Lsig.PQsig.Signature) == 0
 }
 
 func txnNeedsSyntheticSignature(txn transactions.SignedTxn) bool {
@@ -217,7 +205,7 @@ func (s Simulator) check(hdr bookkeeping.BlockHeader, txgroup []transactions.Sig
 				// program but drop the placeholder PQ proof and authorize via
 				// the program hash, so the verification pass treats it as a
 				// contract-only (escrow) account and runs the program without a
-				// real authorization signature.
+				// real Falcon signature.
 				escrow := stxn
 				escrow.Lsig.PQsig = transactions.PQSig{}
 				escrow.AuthAddr = basics.Address(logic.HashProgram(escrow.Lsig.Logic))

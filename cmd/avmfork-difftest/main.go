@@ -89,8 +89,8 @@ func main() {
 	if err := os.WriteFile(filepath.Join(*out, "report.json"), b, 0o644); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("\nmatch %d, mismatch %d, stale %d, error %d, skipped %d\n",
-		counts[difftest.Match], counts[difftest.Mismatch], counts[difftest.Stale], counts[difftest.Errored], counts[difftest.Skipped])
+	fmt.Printf("\nmatch %d, mismatch %d, known-limit %d, stale %d, error %d, skipped %d\n",
+		counts[difftest.Match], counts[difftest.Mismatch], counts[difftest.KnownLimit], counts[difftest.Stale], counts[difftest.Errored], counts[difftest.Skipped])
 	if counts[difftest.Mismatch] > 0 || counts[difftest.Errored] > 0 {
 		os.Exit(1)
 	}

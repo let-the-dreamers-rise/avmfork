@@ -1,8 +1,8 @@
 # avmfork links go-algorand's packages, which need go-algorand's own build
-# of libsodium. `make deps` fetches go-algorand at the pinned commit, builds
+# of libsodium. `make deps` fetches go-algorand at the pinned release, builds
 # that library, and points a go.work file at the checkout.
 
-GO_ALGORAND_COMMIT := 66fdf4ad60479aa41e66cc39b65e7ed118834616
+GO_ALGORAND_COMMIT := 31186e99a69e74483ad95e9ce872903b74758abf # v5.0.5-stable, what MainNet runs
 GA := third_party/go-algorand
 UNAME_S := $(shell uname -s | tr A-Z a-z)
 UNAME_M := $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')

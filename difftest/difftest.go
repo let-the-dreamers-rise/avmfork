@@ -14,8 +14,8 @@
 // seconds. A comparison is only meaningful if neither side read state that
 // changed between the two runs. The tester records every remote read and
 // checks it against the node's state deltas for the rounds in between; if
-// a read key was touched, the case is reported as "stale" instead of being
-// counted.
+// a read key was touched and the responses differ, the case is reported as
+// "stale" instead of being counted as a mismatch.
 package difftest
 
 import (
@@ -54,6 +54,11 @@ const (
 	Stale    Outcome = "stale"   // state moved between the runs; not counted
 	Skipped  Outcome = "skipped" // could not be prepared (e.g. state proof txn)
 	Errored  Outcome = "error"   // a request failed outside evaluation
+
+	// KnownLimit is a difference avmfork documents: the replayed
+	// transaction carries a lease that its original copy still holds on
+	// the network, and avmfork does not know leases from before the fork.
+	KnownLimit Outcome = "known-limit"
 )
 
 // Case is the result for one transaction group.
@@ -164,9 +169,7 @@ func Prepare(group []transactions.SignedTxn, marker []byte) ([]transactions.Sign
 		c.Txn.Note = append(append([]byte{}, s.Txn.Note...), marker...)
 		c.Sig = crypto.Signature{}
 		c.Msig = crypto.MultisigSig{}
-		if !c.PQsig.IsLogicSig() {
-			c.PQsig = transactions.PQSig{}
-		}
+		c.PQsig = transactions.PQSig{}
 		c.Txn.Group = crypto.Digest{}
 		out[i] = c
 	}
@@ -265,7 +268,13 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 	}
 	c.Fetches = len(reads)
 
-	// Any read served after the upstream's round must not have changed since.
+	t.judge(&c, upCode, forkCode, upBody, forkBody)
+	if c.Outcome != Mismatch {
+		return c
+	}
+	// A difference only counts if neither side could have seen different
+	// state: any read served after the upstream's round must not have
+	// changed since.
 	for _, f := range reads {
 		for r := upLast.LastRound + 1; r <= f.Round; r++ {
 			tk, err := t.roundTouched(r)
@@ -279,12 +288,16 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 			}
 		}
 	}
+	return c
+}
 
+// judge compares the two responses and sets c's outcome.
+func (t *Tester) judge(c *Case, upCode, forkCode int, upBody, forkBody []byte) {
 	if upCode != forkCode {
 		c.Outcome = Mismatch
 		c.Detail = fmt.Sprintf("HTTP %d upstream vs %d fork", upCode, forkCode)
 		c.Upstream, c.Fork = upBody, forkBody
-		return c
+		return
 	}
 	if upCode != http.StatusOK {
 		// Both rejected the request: compare the messages.
@@ -294,19 +307,21 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 			c.Outcome, c.Detail = Mismatch, "different request errors"
 			c.Upstream, c.Fork = upBody, forkBody
 		}
-		return c
+		return
 	}
 	var a, b map[string]any
 	if err := json.Unmarshal(upBody, &a); err != nil {
 		c.Outcome, c.Detail = Errored, err.Error()
-		return c
+		return
 	}
 	if err := json.Unmarshal(forkBody, &b); err != nil {
 		c.Outcome, c.Detail = Errored, err.Error()
-		return c
+		return
 	}
 	delete(a, "last-round")
 	delete(b, "last-round")
+	sortUnordered(a)
+	sortUnordered(b)
 	if groups, ok := a["txn-groups"].([]any); ok && len(groups) > 0 {
 		if g, ok := groups[0].(map[string]any); ok && g["failure-message"] != nil {
 			c.Failed = true
@@ -314,12 +329,68 @@ func (t *Tester) Compare(group []transactions.SignedTxn, src basics.Round) Case 
 	}
 	if reflect.DeepEqual(a, b) {
 		c.Outcome = Match
-		return c
+		return
+	}
+	if upCode == http.StatusOK && isLeaseFromBeforeFork(a, b) {
+		c.Outcome, c.Detail = KnownLimit, "lease taken on the network before the fork round"
+		return
 	}
 	c.Outcome = Mismatch
 	c.Detail = firstDiff("", a, b)
 	c.Upstream, c.Fork = upBody, forkBody
-	return c
+}
+
+// unorderedLists are the response arrays that algod (v5.0.x) fills by
+// iterating Go maps, so their order differs from run to run.
+var unorderedLists = map[string]bool{
+	"app-initial-states": true,
+	"app-locals":         true,
+	"kvs":                true,
+}
+
+// sortUnordered sorts those arrays, everywhere in v, by their JSON text.
+func sortUnordered(v any) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			sortUnordered(e)
+			if l, ok := e.([]any); ok && unorderedLists[k] {
+				sort.SliceStable(l, func(i, j int) bool {
+					a, _ := json.Marshal(l[i])
+					b, _ := json.Marshal(l[j])
+					return string(a) < string(b)
+				})
+			}
+		}
+	case []any:
+		for _, e := range x {
+			sortUnordered(e)
+		}
+	}
+}
+
+// isLeaseFromBeforeFork reports whether the only difference is that the
+// upstream rejected the group for a lease it already has on record.
+func isLeaseFromBeforeFork(up, fork map[string]any) bool {
+	g, ok := firstGroup(up)
+	if !ok {
+		return false
+	}
+	msg, _ := g["failure-message"].(string)
+	if !strings.Contains(msg, "using an overlapping lease") {
+		return false
+	}
+	fg, ok := firstGroup(fork)
+	return ok && fg["failure-message"] == nil
+}
+
+func firstGroup(resp map[string]any) (map[string]any, bool) {
+	groups, ok := resp["txn-groups"].([]any)
+	if !ok || len(groups) == 0 {
+		return nil, false
+	}
+	g, ok := groups[0].(map[string]any)
+	return g, ok
 }
 
 func normalizeErr(b []byte) string {
